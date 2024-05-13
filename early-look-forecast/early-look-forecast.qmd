@@ -1,0 +1,167 @@
+---
+title: "2024 Early Look Forecast"
+author: "Bryce Mecum"
+format: html
+editor: visual
+---
+
+# Early Look Timing Forecast
+
+```{r packages, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+```
+
+```{r load_data, include=FALSE}
+env <- read_csv("../../data/data/environment/environment.csv")
+```
+
+```{r}
+cpue <- read_csv("../../data/data/cpue/cpue.csv")
+```
+
+```{r}
+combined <- full_join(cpue, env, by = "year")
+combined
+```
+
+## Graphical Analysis
+
+```{r amatc_plot, echo=FALSE, warning=FALSE, fig.height=4, fig.width=4}
+ggplot(combined, aes(mdj, amatc)) +
+  geom_point(shape = 1) +
+  geom_hline(yintercept = as.numeric(combined[which(combined$year == 2024),"amatc"]), color="red") +
+  geom_smooth(formula = "y ~ x", method="lm", se = FALSE) +
+  labs(y = expression("AMATC,"*~degree*"C"), x = "Median Run Timing (June)") + 
+  theme_bw()
+```
+
+## Hind-cast Performance
+
+```{r modelselection}
+forecast_year <- 2024
+hindcast_window <- 15 # last n years
+hindcast_years <- seq(forecast_year - hindcast_window, forecast_year - 1)
+round_method <- floor # Floor predictions
+
+models <- c(
+  "mdj ~ amatc",
+  "mdj ~ msstc",
+  "mdj ~ pice",
+  "mdj ~ amatc + msstc",
+  "mdj ~ amatc + pice",
+  "mdj ~ msstc + pice",
+  "mdj ~ amatc + msstc + pice"
+)
+
+hindcast_year <- function(data, model, forecast_year) {
+  training_data <- data[data$year < forecast_year, ]
+  training_model <- lm(formula(model), training_data)
+
+  new_data <- data[data$year == forecast_year, ]
+  prediction <- predict(training_model, newdata = new_data, se.fit = TRUE)
+  prediction_fit <- round_method(prediction$fit[[1]])
+  prediction_interval <- prediction_fit + c(-2, 2) * qnorm(0.975) *
+    prediction$se.fit[[1]]
+
+  # Extract response
+  response_var = dimnames(attr(terms(as.formula(model)), "factors"))[[1]][1]
+  actual <- new_data[[response_var]]
+
+  in_interval <- actual >= round_method(prediction_interval[1]) &&
+    actual <= round_method(prediction_interval[2])
+
+  data.frame(
+    "formula" = model,
+    "year" = forecast_year,
+    "predicted" = (prediction_fit),
+    "observed" = actual,
+    "diff" = prediction_fit - actual,
+    "predict_se" = prediction$se.fit[[1]],
+    "in_interval" = in_interval,
+    "int_lower" = prediction_interval[1],
+    "int_upper" = prediction_interval[2],
+    "int_width" = prediction_interval[2] -
+      prediction_interval[1]
+  )
+}
+
+hindcast_model <- function(data, model, years, summarize = TRUE) {
+  result <- lapply(years, function(year) {
+    hindcast_year(data, model, year)
+  })
+
+  model_result <- do.call(rbind, result)
+
+  if (!summarize) {
+    return(model_result)
+  }
+
+  data.frame(
+    model = model,
+    "MAPE" = round(mean(abs(model_result$predicted - model_result$observed)), 2),
+    "SDMAPE" = round(sd(abs(model_result$predicted - model_result$observed)), 2),
+    "width" = round(mean(model_result$int_width), 2),
+    "p.in" = round(sum(model_result$in_interval) / length(model_result$in_interval), 2),
+    "absmax" = max(abs(model_result$predicted - model_result$observed)),
+    "meanbias" = round(mean(model_result$predicted - model_result$observed), 2)
+  )
+}
+
+hindcast_models <- function(data, models, years) {
+  result <- lapply(models, function(model) {
+    hindcast_model(data, model, years)
+  })
+
+  do.call(rbind, result)
+}
+
+model_selection_result <- hindcast_models(combined, models, hindcast_years)
+knitr::kable(model_selection_result)
+```
+
+## Forecast
+
+```{r, echo=FALSE, include=FALSE}
+model <- lm(mdj ~ amatc, data = subset(combined, year < 2024))
+
+predicted <- floor(unname(predict(model, newdata =  combined[combined$year == 2024,])))
+predicted
+```
+
+## Early Look Model vs. Full Model
+
+How often does the early look model agree with the full model? We can look at this by hindcasting predictions from each and comparing their MDJ predictions.
+
+```{r}
+nyears <- 20
+years <- (2023-nyears):2023
+
+result_early <- lapply(years, function(year) { hindcast_year(combined, "mdj ~ amatc", year) })
+result_early_df <- do.call(rbind.data.frame, result_early)
+result_full <- lapply(years, function(year) { hindcast_year(combined, "mdj ~ amatc + msstc + pice", year) })
+result_full_df <- do.call(rbind.data.frame, result_full)
+
+comparison <- data.frame(
+  year = years,
+  actual = result_full_df$observed, 
+  early = result_early_df$predicted,
+  full = result_full_df$predicted)
+comparison
+```
+
+Graphically this looks like...
+
+```{r, fig.width = 4, fig.height = 4}
+comparison_tall <- comparison |> 
+  pivot_longer(c("early", "full"))
+
+ggplot() +
+  geom_point(data=comparison_tall, aes(value, actual, shape = name)) +
+  geom_segment(data = comparison, aes(x = full, y = actual, xend = early, yend = actual), alpha = 0.25) +
+  scale_shape_manual(values = c(3, 1)) +
+  theme_bw() +
+  labs(x="Predicted", y = "Observed")
+```
