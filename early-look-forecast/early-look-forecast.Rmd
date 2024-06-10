@@ -1,0 +1,91 @@
+---
+title: Early Look Timing Forecast
+author: Bryce Mecum
+output: md_document
+---
+
+# Early Look Timing Forecast
+
+```{r packages, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+```
+
+```{r load_data, include=FALSE}
+env <- read_csv("../../data/data/environment/environment.csv")
+```
+
+
+```{r}
+cpue <- read_csv("../../data/data/cpue/cpue.csv")
+```
+
+```{r}
+combined <- full_join(cpue, env, by = "year")
+combined
+```
+
+
+## Graphical Analysis
+
+How does the 2018 value of AMATC, `r amatc`, compare to the historical data?
+
+```{r amatc_plot, echo=FALSE, warning=FALSE, fig.height=4, fig.width=4}
+ggplot(combined, aes(amatc, mdj)) +
+  geom_point(shape = 1) +
+  geom_vline(xintercept = as.numeric(combined[which(combined$year == 2024),"amatc"])) +
+  labs(x = expression("AMATC,"*~degree*"C"), y = "Median Run Timing (June)")
+```
+
+## Hind-cast Performance
+
+## Forecast
+
+```{r, echo=FALSE, include=FALSE}
+model <- lm(mdj ~ amatc, data = subset(yuk, year < 2018))
+
+predicted <- floor(unname(predict(model, newdata =  yuk[yuk$year == 2018,])))
+```
+
+To forecast MDJ for 2018, I followed the approach as in previous years:
+
+  I fit a simple linear model of AMATC vs. MDJ using 55 years (1961 -- 2017) of historical AMATC and MDJ.
+I then predicted the 2018 MDJ using the fitted model which came out to be **June `r predicted`** which is just slightly earlier than average (mean `r floor(mean(yuk$mdj, na.rm = TRUE))`).
+
+### Hindcasting
+
+```{r, echo=FALSE}
+result <- data.frame()
+
+for (y in (max(yuk$year) - 15):(max(yuk$year) - 1)) {
+  model <- lm(mdj ~ amatc, data = subset(yuk, year < y))
+  model_pred <- as.numeric(floor(predict(model, newdata =  yuk[yuk$year == y,"amatc"])))
+
+  result <- rbind(result,
+                  data.frame(year = y,
+                             obs = as.numeric(yuk[yuk$year == y,"mdj"]),
+                             pred = round(model_pred, 0)))
+}
+
+
+metric_mad <- round(mean(abs(result$obs - result$pred)), 2)
+metric_mad_sd <- round(sd(abs(result$obs - result$pred)), 2)
+metric_max_abs_resid <- round(max(abs(result$obs - result$pred)), 2)
+# mean(result$obs - result$pred)
+```
+
+As with the full forecast and previous years, I used a hindcasting approach (one-step-ahead cross-validation) to get a sense of how well AMATC predicts MDJ.
+
+I hindcasted MDJ using an arbitrary window of 2003 -- 2017 (n=15) using the same AMATC vs. MDJ model as above and calculated the following three metrics:
+
+  | Metric | Value (days) |
+  |--------|-------|
+  | Mean absolute devitation | `r metric_mad` |
+  | Standard deviation of absolute deviations |`r metric_mad_sd`|
+  | Maximum absolute residual | `r metric_max_abs_resid` |
+  | Mean deviation | `r round(mean(result$pred - result$obs))`
+
+Predicted values of MDJ were rounded down to the nearest day because MDJ is recorded at daily time steps.
+
+**Interpretation**: The AMATC-only model is a lot less useful than the full model and tends to generate predictions that are four days off the true MDJ and tend to be biased 4 days early.
