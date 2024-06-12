@@ -6,12 +6,8 @@ See our [AOOS Project Page](https://aoos.org/project/yukon-river-chinook-run-tim
 
 ## 2024 Forecast
 
-TODO
-
-### Chart 1
-
-TODO
-
-### Chart 2
-
-TODO
+| Percentile | Prediction |
+|:-----------|-----------:|
+| 15      |         14 |
+| 25        |         17 |
+| 50        |         23 |
